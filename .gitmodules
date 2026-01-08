@@ -1,0 +1,3 @@
+[submodule "vanna_original"]
+	path = vanna_original
+	url = https://github.com/vanna-ai/vanna.git
