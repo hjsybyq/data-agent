@@ -1,19 +1,22 @@
 # Data Agent
 
-A LangGraph-based Text-to-SQL system. This project provides a graph-driven approach to natural language SQL generation with explicit state management, retry loops, and LangChain integration.
+A LangGraph-based Text-to-SQL system with Web UI. This project provides a graph-driven approach to natural language SQL generation with explicit state management, retry loops, and LangChain integration.
 
+[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/hjsybyq/data-agent)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-green.svg)](https://github.com/langchain-ai/langgraph)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ## Features
 
+- 🌐 **Web UI** - Interactive chat interface with FastAPI + Alpine.js
 - 🔄 **Graph-Driven Architecture** - Explicit flow control with LangGraph StateGraph
 - 🛠️ **Self-Correcting SQL** - Automatic retry loops for SQL validation and execution errors
 - 🔌 **Provider Agnostic** - Support for OpenAI, Anthropic, and Google LLMs
 - 📚 **RAG Example Retrieval** - Learn from question-SQL examples for better accuracy
 - 🔀 **Question Decomposition** - Automatically break down complex queries
 - 🗣️ **Multi-turn Conversations** - Context-aware follow-up questions
+- 📊 **Data Visualization** - ECharts integration for result visualization
 
 ## Quick Start
 
@@ -86,6 +89,27 @@ pip install -e ".[all-providers]"  # All providers
 # Development
 pip install -e ".[dev]"
 ```
+
+## Web UI
+
+Start the interactive web interface:
+
+```bash
+# Install dependencies
+pip install fastapi uvicorn jinja2
+
+# Run the web server
+python run_web.py
+```
+
+Open http://localhost:8000 in your browser.
+
+**Features:**
+- 💬 Chat-style interface for natural language queries
+- 📝 SQL syntax highlighting and copy button
+- 📊 Automatic data visualization with ECharts
+- 🔀 Question decomposition display for complex queries
+- 📚 Training data management
 
 ## Usage
 

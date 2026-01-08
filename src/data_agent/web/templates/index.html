@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Agent - Text-to-SQL</title>
+
+    <!-- TailwindCSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Alpine.js -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+    <!-- Highlight.js for SQL -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/sql.min.js"></script>
+
+    <!-- ECharts -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+
+    <style>
+        [x-cloak] {
+            display: none !important;
+        }
+
+        .message-enter {
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .typing {
+            display: inline-flex;
+            gap: 4px;
+        }
+
+        .typing span {
+            width: 8px;
+            height: 8px;
+            background: #3b82f6;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite;
+        }
+
+        .typing span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes bounce {
+
+            0%,
+            80%,
+            100% {
+                transform: translateY(0);
+            }
+
+            40% {
+                transform: translateY(-8px);
+            }
+        }
+
+        pre code.hljs {
+            padding: 1rem;
+            border-radius: 0.5rem;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+
+    <div x-data="chatApp()" x-init="init()" class="flex flex-col h-screen max-w-5xl mx-auto">
+
+        <!-- Header -->
+        <header class="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+            <div class="flex items-center gap-3">
+                <span class="text-2xl">🤖</span>
+                <h1
+                    class="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+                    Data Agent
+                </h1>
+            </div>
+            <div class="flex items-center gap-4">
+                <button @click="showSettings = true" class="p-2 hover:bg-gray-700 rounded-lg transition">
+                    ⚙️
+                </button>
+                <button @click="showTraining = true"
+                    class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition">
+                    📚 训练数据
+                </button>
+            </div>
+        </header>
+
+        <!-- Messages Area -->
+        <main class="flex-1 overflow-y-auto px-6 py-4 space-y-4" id="messages">
+
+            <!-- Welcome Message -->
+            <template x-if="messages.length === 0">
+                <div class="text-center py-12 text-gray-400">
+                    <div class="text-5xl mb-4">💬</div>
+                    <h2 class="text-xl font-semibold mb-2">欢迎使用 Data Agent</h2>
+                    <p>输入自然语言问题，我会帮你生成 SQL 并查询数据</p>
+                    <div class="mt-6 flex flex-wrap justify-center gap-2">
+                        <button @click="askQuestion('数据库中有多少位客户？')"
+                            class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-full text-sm transition">
+                            有多少位客户？
+                        </button>
+                        <button @click="askQuestion('销售额最高的前5个国家')"
+                            class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-full text-sm transition">
+                            销售额最高的国家
+                        </button>
+                        <button @click="askQuestion('哪位艺术家的专辑最多？')"
+                            class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-full text-sm transition">
+                            专辑最多的艺术家
+                        </button>
+                    </div>
+                </div>
+            </template>
+
+            <!-- Messages -->
+            <template x-for="(msg, index) in messages" :key="index">
+                <div class="message-enter" :class="msg.role === 'user' ? 'flex justify-end' : ''">
+
+                    <!-- User Message -->
+                    <template x-if="msg.role === 'user'">
+                        <div class="max-w-[80%] px-4 py-3 bg-blue-600 rounded-2xl rounded-br-md">
+                            <p x-text="msg.content"></p>
+                        </div>
+                    </template>
+
+                    <!-- Assistant Message -->
+                    <template x-if="msg.role === 'assistant'">
+                        <div class="max-w-[90%] space-y-3">
+
+                            <!-- Thinking -->
+                            <template x-if="msg.thinking">
+                                <div class="flex items-center gap-2 text-gray-400">
+                                    <div class="typing">
+                                        <span></span><span></span><span></span>
+                                    </div>
+                                    <span x-text="msg.thinking"></span>
+                                </div>
+                            </template>
+
+                            <!-- SQL -->
+                            <template x-if="msg.sql">
+                                <div class="bg-gray-800 rounded-xl overflow-hidden">
+                                    <div class="flex items-center justify-between px-4 py-2 bg-gray-700/50">
+                                        <span class="text-sm text-gray-400">📝 SQL</span>
+                                        <button @click="copyToClipboard(msg.sql)"
+                                            class="text-xs px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded transition">
+                                            复制
+                                        </button>
+                                    </div>
+                                    <pre><code class="language-sql" x-text="msg.sql"></code></pre>
+                                </div>
+                            </template>
+
+                            <!-- Sub Questions with Step Results -->
+                            <template x-if="msg.subQuestions && msg.subQuestions.length > 0">
+                                <div
+                                    class="bg-gradient-to-r from-purple-900/30 to-blue-900/30 rounded-xl p-4 border border-purple-700/30">
+                                    <div class="text-sm text-purple-300 mb-3 font-semibold">🔀 问题拆分 (<span
+                                            x-text="msg.subQuestions.length"></span> 步)</div>
+                                    <div class="space-y-3">
+                                        <template x-for="(sq, i) in msg.subQuestions" :key="i">
+                                            <div class="bg-gray-800/50 rounded-lg p-3">
+                                                <div class="flex gap-2">
+                                                    <span
+                                                        class="text-purple-400 font-mono text-xs bg-purple-900/50 px-2 py-0.5 rounded"
+                                                        x-text="'步骤 ' + (i+1)"></span>
+                                                </div>
+                                                <div class="text-gray-200 text-sm mt-2" x-text="sq.question"></div>
+                                                <template x-if="sq.sql">
+                                                    <div class="text-gray-500 text-xs mt-2 font-mono bg-gray-900/50 rounded p-2 overflow-x-auto"
+                                                        x-text="sq.sql"></div>
+                                                </template>
+                                                <template x-if="sq.result && sq.result.data">
+                                                    <div class="mt-2 text-xs">
+                                                        <span class="text-green-400">✓ 结果:</span>
+                                                        <span class="text-gray-400"
+                                                            x-text="sq.result.row_count + ' 行数据'"></span>
+                                                        <template x-if="sq.result.data.length > 0">
+                                                            <span class="text-gray-500 ml-2"
+                                                                x-text="'→ ' + JSON.stringify(sq.result.data[0]).substring(0, 50) + '...'"></span>
+                                                        </template>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- Result Table -->
+                            <template x-if="msg.result && msg.result.data && msg.result.data.length > 0">
+                                <div class="bg-gray-800 rounded-xl overflow-hidden">
+                                    <div class="flex items-center justify-between px-4 py-2 bg-gray-700/50">
+                                        <span class="text-sm text-gray-400">
+                                            📊 结果 (<span x-text="msg.result.row_count || msg.result.data.length"></span>
+                                            行)
+                                        </span>
+                                        <button @click="downloadCSV(msg.result)"
+                                            class="text-xs px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded transition">
+                                            下载 CSV
+                                        </button>
+                                    </div>
+                                    <div class="overflow-x-auto">
+                                        <table class="w-full text-sm">
+                                            <thead class="bg-gray-700/30">
+                                                <tr>
+                                                    <template
+                                                        x-for="col in msg.result.columns || Object.keys(msg.result.data[0])"
+                                                        :key="col">
+                                                        <th class="px-4 py-2 text-left text-gray-400" x-text="col"></th>
+                                                    </template>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <template x-for="(row, ri) in msg.result.data.slice(0, 10)" :key="ri">
+                                                    <tr class="border-t border-gray-700/50 hover:bg-gray-700/20">
+                                                        <template x-for="(val, key) in row" :key="key">
+                                                            <td class="px-4 py-2" x-text="val"></td>
+                                                        </template>
+                                                    </tr>
+                                                </template>
+                                            </tbody>
+                                        </table>
+                                        <template x-if="msg.result.data.length > 10">
+                                            <div class="px-4 py-2 text-sm text-gray-500 text-center">
+                                                ... 还有 <span x-text="msg.result.data.length - 10"></span> 行
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- Chart -->
+                            <template x-if="msg.result && canShowChart(msg.result)">
+                                <div class="bg-gray-800 rounded-xl p-4">
+                                    <div class="text-sm text-gray-400 mb-2">📈 图表</div>
+                                    <div :id="'chart-' + index" class="h-64"></div>
+                                </div>
+                            </template>
+
+                            <!-- Answer -->
+                            <template x-if="msg.answer">
+                                <div class="bg-gradient-to-r from-gray-800 to-gray-800/50 rounded-xl px-4 py-3">
+                                    <div class="text-sm text-gray-400 mb-1">💡 答案</div>
+                                    <div class="text-gray-100 whitespace-pre-wrap" x-text="msg.answer"></div>
+                                </div>
+                            </template>
+
+                        </div>
+                    </template>
+
+                </div>
+            </template>
+
+        </main>
+
+        <!-- Input Area -->
+        <footer class="px-6 py-4 border-t border-gray-700">
+            <form @submit.prevent="submitQuestion" class="flex gap-3">
+                <input type="text" x-model="question" :disabled="isLoading" placeholder="请输入你的问题..."
+                    class="flex-1 px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl focus:outline-none focus:border-blue-500 transition disabled:opacity-50">
+                <button type="submit" :disabled="isLoading || !question.trim()"
+                    class="px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-xl font-semibold transition">
+                    <span x-show="!isLoading">发送</span>
+                    <span x-show="isLoading" class="typing">
+                        <span></span><span></span><span></span>
+                    </span>
+                </button>
+            </form>
+        </footer>
+
+        <!-- Settings Modal -->
+        <div x-show="showSettings" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+            @click.self="showSettings = false">
+            <div class="bg-gray-800 rounded-2xl p-6 w-full max-w-md">
+                <h2 class="text-xl font-bold mb-4">⚙️ 设置</h2>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">数据库 Schema</label>
+                        <textarea x-model="schema" rows="6"
+                            class="w-full px-3 py-2 bg-gray-700 rounded-lg text-sm font-mono"></textarea>
+                    </div>
+                    <button @click="saveSchema(); showSettings = false"
+                        class="w-full py-2 bg-blue-600 hover:bg-blue-500 rounded-lg transition">
+                        保存
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Training Modal -->
+        <div x-show="showTraining" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+            @click.self="showTraining = false">
+            <div class="bg-gray-800 rounded-2xl p-6 w-full max-w-2xl max-h-[80vh] overflow-y-auto">
+                <h2 class="text-xl font-bold mb-4">📚 训练数据</h2>
+
+                <!-- Add Training -->
+                <div class="bg-gray-700/50 rounded-xl p-4 mb-4">
+                    <h3 class="text-sm font-semibold mb-2">添加训练样例</h3>
+                    <div class="space-y-2">
+                        <input type="text" x-model="newExample.question" placeholder="问题"
+                            class="w-full px-3 py-2 bg-gray-700 rounded-lg text-sm">
+                        <textarea x-model="newExample.sql" placeholder="SQL" rows="2"
+                            class="w-full px-3 py-2 bg-gray-700 rounded-lg text-sm font-mono"></textarea>
+                        <button @click="addTrainingExample"
+                            class="px-4 py-2 bg-green-600 hover:bg-green-500 rounded-lg text-sm transition">
+                            添加
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Training List -->
+                <div class="space-y-2">
+                    <template x-for="ex in trainingData" :key="ex.id">
+                        <div class="bg-gray-700/30 rounded-lg p-3 flex justify-between items-start">
+                            <div>
+                                <div class="text-sm" x-text="ex.question"></div>
+                                <div class="text-xs text-gray-500 font-mono mt-1"
+                                    x-text="ex.sql.substring(0, 60) + '...'"></div>
+                            </div>
+                            <button @click="deleteTrainingExample(ex.id)"
+                                class="text-red-400 hover:text-red-300 text-sm">
+                                ✕
+                            </button>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        function chatApp() {
+            return {
+                messages: [],
+                question: '',
+                isLoading: false,
+                showSettings: false,
+                showTraining: false,
+                schema: '',
+                conversationId: null,
+                trainingData: [],
+                newExample: { question: '', sql: '' },
+
+                init() {
+                    this.loadSchema();
+                    this.loadTrainingData();
+                    hljs.highlightAll();
+                },
+
+                async loadSchema() {
+                    try {
+                        const res = await fetch('/api/schema');
+                        const data = await res.json();
+                        this.schema = data.schema || '';
+                    } catch (e) {
+                        console.error('Failed to load schema:', e);
+                    }
+                },
+
+                async saveSchema() {
+                    try {
+                        await fetch('/api/schema', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ schema_text: this.schema })
+                        });
+                    } catch (e) {
+                        console.error('Failed to save schema:', e);
+                    }
+                },
+
+                async loadTrainingData() {
+                    try {
+                        const res = await fetch('/api/training');
+                        this.trainingData = await res.json();
+                    } catch (e) {
+                        console.error('Failed to load training data:', e);
+                    }
+                },
+
+                async addTrainingExample() {
+                    if (!this.newExample.question || !this.newExample.sql) return;
+
+                    try {
+                        await fetch('/api/train', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.newExample)
+                        });
+                        this.newExample = { question: '', sql: '' };
+                        await this.loadTrainingData();
+                    } catch (e) {
+                        console.error('Failed to add training example:', e);
+                    }
+                },
+
+                async deleteTrainingExample(id) {
+                    try {
+                        await fetch(`/api/training/${id}`, { method: 'DELETE' });
+                        await this.loadTrainingData();
+                    } catch (e) {
+                        console.error('Failed to delete training example:', e);
+                    }
+                },
+
+                askQuestion(q) {
+                    this.question = q;
+                    this.submitQuestion();
+                },
+
+                submitQuestion() {
+                    if (!this.question.trim() || this.isLoading) return;
+
+                    const userQuestion = this.question.trim();
+                    this.question = '';
+                    this.isLoading = true;
+
+                    // Add user message
+                    this.messages.push({ role: 'user', content: userQuestion });
+
+                    // Add assistant placeholder - use index for reactivity
+                    const msgIndex = this.messages.length;
+                    this.messages.push({
+                        role: 'assistant',
+                        thinking: '正在分析问题...',
+                        sql: null,
+                        result: null,
+                        answer: null,
+                        subQuestions: null
+                    });
+
+                    // Scroll to bottom
+                    this.$nextTick(() => this.scrollToBottom());
+
+                    // SSE stream
+                    const params = new URLSearchParams({ q: userQuestion });
+                    if (this.conversationId) params.append('conversation_id', this.conversationId);
+
+                    const eventSource = new EventSource(`/api/ask/stream?${params}`);
+                    const self = this;
+
+                    eventSource.onmessage = (event) => {
+                        console.log('[SSE] Received:', event.data);
+                        const data = JSON.parse(event.data);
+
+                        // Update message using array index for reactivity
+                        switch (data.type) {
+                            case 'thinking':
+                                self.messages[msgIndex].thinking = data.data;
+                                break;
+                            case 'sql':
+                                console.log('[SSE] Got SQL:', data.data);
+                                self.messages[msgIndex].thinking = null;
+                                self.messages[msgIndex].sql = data.data;
+                                self.$nextTick(() => hljs.highlightAll());
+                                break;
+                            case 'sub_questions':
+                                self.messages[msgIndex].thinking = null;  // Clear thinking
+                                self.messages[msgIndex].subQuestions = data.data;
+                                break;
+                            case 'result':
+                                self.messages[msgIndex].thinking = null;  // Clear thinking
+                                self.messages[msgIndex].result = data.data;
+                                self.$nextTick(() => self.renderChart(self.messages[msgIndex], msgIndex));
+                                break;
+                            case 'answer':
+                                self.messages[msgIndex].thinking = null;  // Clear thinking
+                                self.messages[msgIndex].answer = data.data;
+                                break;
+                            case 'done':
+                                self.conversationId = data.data || self.conversationId;
+                                self.isLoading = false;
+                                eventSource.close();
+                                break;
+                            case 'error':
+                                self.messages[msgIndex].thinking = null;
+                                self.messages[msgIndex].answer = '❌ 错误: ' + data.data;
+                                self.isLoading = false;
+                                eventSource.close();
+                                break;
+                        }
+
+                        self.$nextTick(() => self.scrollToBottom());
+                    };
+
+                    eventSource.onerror = () => {
+                        self.messages[msgIndex].thinking = null;
+                        self.messages[msgIndex].answer = '❌ 连接错误，请重试';
+                        self.isLoading = false;
+                        eventSource.close();
+                    };
+                },
+
+                scrollToBottom() {
+                    const container = document.getElementById('messages');
+                    container.scrollTop = container.scrollHeight;
+                },
+
+                copyToClipboard(text) {
+                    navigator.clipboard.writeText(text);
+                },
+
+                downloadCSV(result) {
+                    if (!result || !result.data) return;
+
+                    const headers = result.columns || Object.keys(result.data[0]);
+                    const rows = result.data.map(row =>
+                        headers.map(h => JSON.stringify(row[h] ?? '')).join(',')
+                    );
+                    const csv = [headers.join(','), ...rows].join('\n');
+
+                    const blob = new Blob([csv], { type: 'text/csv' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'query_result.csv';
+                    a.click();
+                },
+
+                canShowChart(result) {
+                    if (!result || !result.data || result.data.length === 0) return false;
+
+                    // Check if there's at least one numeric column
+                    const firstRow = result.data[0];
+                    return Object.values(firstRow).some(v => typeof v === 'number');
+                },
+
+                renderChart(msg, index) {
+                    if (!msg.result || !this.canShowChart(msg.result)) return;
+
+                    const chartId = `chart-${index}`;
+                    const container = document.getElementById(chartId);
+                    if (!container) return;
+
+                    const data = msg.result.data;
+                    const columns = msg.result.columns || Object.keys(data[0]);
+
+                    // Find label and value columns
+                    const labelCol = columns.find(c => typeof data[0][c] === 'string') || columns[0];
+                    const valueCol = columns.find(c => typeof data[0][c] === 'number') || columns[1];
+
+                    const chart = echarts.init(container, 'dark');
+                    chart.setOption({
+                        backgroundColor: 'transparent',
+                        tooltip: { trigger: 'axis' },
+                        xAxis: {
+                            type: 'category',
+                            data: data.map(r => r[labelCol]),
+                            axisLabel: { interval: 0, rotate: 30 }
+                        },
+                        yAxis: { type: 'value' },
+                        series: [{
+                            type: 'bar',
+                            data: data.map(r => r[valueCol]),
+                            itemStyle: { color: '#3b82f6' }
+                        }]
+                    });
+                }
+            };
+        }
+    </script>
+
+</body>
+
+</html>

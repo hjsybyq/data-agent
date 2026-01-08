@@ -13,13 +13,18 @@ import concurrent.futures
 from typing import Any, Dict, Optional, List, Union
 from dataclasses import dataclass, field
 
+# ============================================================
+# Windows asyncio 修复
+# ============================================================
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 
 def _run_async(coro):
     """
-    Run an async coroutine safely, using threading to avoid Windows socket issues.
+    Run an async coroutine safely using a dedicated thread.
     
-    This uses a dedicated thread with its own event loop to completely
-    isolate from the main thread's network stack issues.
+    This approach works in both sync Flask and async FastAPI contexts.
     """
     result = None
     exception = None
@@ -28,25 +33,16 @@ def _run_async(coro):
         nonlocal result, exception
         try:
             # Create a fresh event loop in this thread
-            try:
-                loop = asyncio.new_event_loop()
-            except ConnectionError:
-                if sys.platform == "win32":
-                    # Fallback to Proactor loop when Selector loop socketpair fails on Windows
-                    loop = asyncio.WindowsProactorEventLoopPolicy().new_event_loop()
-                else:
-                    raise
+            loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
                 result = loop.run_until_complete(coro)
             finally:
-                loop.close()
+                try:
+                    loop.close()
+                except Exception:
+                    pass
         except Exception as e:
-            try:
-                if hasattr(coro, "close") and not getattr(coro, "cr_running", False):
-                    coro.close()
-            except Exception:
-                pass
             exception = e
     
     # Run in a daemon thread
@@ -329,7 +325,7 @@ class DataAgent:
             conversation_context=conversation_context,
         )
         
-        # Run the graph via async wrapper
+        # Run the graph synchronously to avoid Windows asyncio issues
         final_state = _run_async(self._graph.ainvoke(initial_state))
         
         # Extract results
