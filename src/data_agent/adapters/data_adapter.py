@@ -10,7 +10,7 @@ import asyncio
 import sys
 import threading
 import concurrent.futures
-from typing import Any, Dict, Optional, List, Union
+from typing import Any, Dict, Optional, List, Union, AsyncIterator
 from dataclasses import dataclass, field
 
 # ============================================================
@@ -314,6 +314,15 @@ class DataAgent:
             from data_agent.graph.nodes import set_vector_store
             set_vector_store(self._vector_store)
     
+    def get_agent(self):
+        """
+        Get the underlying LangChain agent for streaming.
+        
+        Returns:
+            The LangChain agent object (supports astream_events)
+        """
+        return self._agent
+    
     def set_schema(self, schema: str) -> None:
         """
         Set the database schema for SQL generation.
@@ -417,12 +426,115 @@ class DataAgent:
         # Add user message to history
         conversation.add_message("user", question)
         
-        # Route to appropriate mode
         if self._use_agent_mode and self._agent is not None:
             return self._ask_agent_mode(question, conversation)
         else:
             return self._ask_graph_mode(question, conversation)
-    
+            
+    async def astream(
+        self,
+        question: str,
+        conversation_id: Optional[str] = None,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        Stream events for the question answer.
+        
+        Yields:
+            Dict events:
+            - {"type": "token", "data": "..."}
+            - {"type": "sql", "data": "..."}
+            - {"type": "execution_steps", "data": [...]}
+            - {"type": "answer", "data": "final answer"}
+            - {"type": "done", "data": conversation_id}
+            - {"type": "error", "data": "..."}
+        """
+        try:
+            # Get or create conversation
+            conversation = self._conversation_store.get_or_create(conversation_id)
+            conversation_id = conversation.id
+            
+            # Add user message to history
+            conversation.add_message("user", question)
+            
+            # Build messages for agent
+            messages = []
+            for msg in conversation.messages[:-1]:
+                messages.append({"role": msg.role, "content": msg.content})
+            messages.append({"role": "user", "content": question})
+            
+            # Track state for final history
+            final_answer = ""
+            generated_sql = None
+            sql_result = None
+            execution_steps = []
+            
+            # Stream events
+            if self._use_agent_mode and self._agent is not None:
+                async for event in self._agent.astream_events(
+                    {"messages": messages},
+                    version="v1"
+                ):
+                    kind = event["event"]
+                    data = event["data"]
+                    
+                    # 1. Stream Tokens (Chat Model Output)
+                    if kind == "on_chat_model_stream":
+                        content = data.get("chunk", {}).content
+                        if content:
+                            final_answer += content
+                            yield {"type": "token", "data": content}
+                            
+                    # 2. Capture Tool Inputs/Outputs (Execution Steps)
+                    elif kind == "on_tool_end":
+                        tool_name = event["name"]
+                        output = data.get("output")
+                        
+                        # Record step
+                        step = {
+                            "tool": tool_name,
+                            "summary": str(output)[:100] + "...",
+                            "status": "success",
+                            "result_data": None
+                        }
+                        
+                        # Special handling for specific tools
+                        if tool_name == "execute_sql":
+                            step["summary"] = "SQL executed successfully"
+                            try:
+                                import json
+                                res_dict = json.loads(output) if isinstance(output, str) else output
+                                step["result_data"] = res_dict.get("data", [])[:5]  # Preview
+                                generated_sql = res_dict.get("sql")
+                                sql_result = res_dict
+                                
+                                # Yield SQL and Result for frontend visualization
+                                if generated_sql:
+                                    yield {"type": "sql", "data": generated_sql}
+                                if sql_result and sql_result.get("success"):
+                                    yield {"type": "result", "data": sql_result}
+                            except:
+                                pass
+                                
+                        elif tool_name == "get_database_schema":
+                            step["summary"] = "Schema retrieved"
+                        
+                        execution_steps.append(step)
+                        # Yield updated steps
+                        yield {"type": "execution_steps", "data": execution_steps}
+
+            # Save to conversation history
+            conversation.add_message(
+                "assistant", 
+                final_answer,
+                sql=generated_sql,
+                sql_result=sql_result
+            )
+            
+            # Yield final completion
+            yield {"type": "done", "data": conversation_id}
+            
+        except Exception as e:
+            yield {"type": "error", "data": str(e)}
     def _ask_agent_mode(
         self,
         question: str,
@@ -438,7 +550,7 @@ class DataAgent:
             })
         messages.append({"role": "user", "content": question})
         
-        # Invoke agent
+        # Invoke agent (LLM streaming enabled, but we get complete result)
         result = _run_async(self._agent.ainvoke({"messages": messages}))
         
         # Extract results from agent output

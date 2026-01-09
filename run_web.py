@@ -193,66 +193,194 @@ async def ask_stream(
             print(f"[SSE] Processing: {q}")
             yield f"data: {json.dumps({'type': 'thinking', 'data': '正在分析问题...'})}\n\n"
             
-            # Get result
-            print("[SSE] Calling agent.ask()...")
-            result = await asyncio.to_thread(
-                agent.ask,
-                question=q,
-                conversation_id=conversation_id,
-            )
+            # 获取底层 agent
+            lang_agent = agent.get_agent()
+            if lang_agent is None:
+                # Fallback to non-streaming
+                result = await asyncio.to_thread(agent.ask, question=q, conversation_id=conversation_id)
+                if result.get("answer"):
+                    yield f"data: {json.dumps({'type': 'answer', 'data': result['answer']})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'data': result.get('conversation_id', '')})}\n\n"
+                return
             
-            # Send examples if any
-            if result.get("similar_examples"):
-                examples = make_serializable(result["similar_examples"])
-                yield f"data: {json.dumps({'type': 'examples', 'data': examples})}\n\n"
+            # 构建消息
+            messages = [{"role": "user", "content": q}]
             
-            sql_preview = (result.get('sql') or 'N/A')[:50]
-            print(f"[SSE] Got result: {sql_preview}...")
+            # 收集数据用于历史记录
+            final_answer = ""
+            execution_steps = []
+            current_sql = None
+            sql_result = None
             
-            # Send todo_list (Agent 模式任务规划)
-            if result.get("todo_list"):
-                todo_list = make_serializable(result["todo_list"])
-                yield f"data: {json.dumps({'type': 'todo_list', 'data': todo_list})}\n\n"
-                print(f"[SSE] Sent todo_list: {len(todo_list)} items")
+            # 工具名称映射
+            TOOL_DISPLAY = {
+                "get_database_schema": "📋 获取 Schema",
+                "search_examples": "🔍 检索样例",
+                "validate_sql": "✓ 验证 SQL",
+                "execute_sql": "▶ 生成 SQL",  # 只显示生成SQL，执行结果单独一行
+            }
             
-            # Send execution_steps (Agent 模式执行过程)
-            if result.get("execution_steps"):
-                execution_steps = make_serializable(result["execution_steps"])
-                yield f"data: {json.dumps({'type': 'execution_steps', 'data': execution_steps})}\n\n"
-                print(f"[SSE] Sent execution_steps: {len(execution_steps)} steps")
+            # 真正的流式输出 (增加 recursion_limit 防止复杂查询失败)
+            async for event in lang_agent.astream_events(
+                {"messages": messages},
+                version="v2",
+                config={"recursion_limit": 100},
+            ):
+                kind = event.get("event")
+                name = event.get("name", "")
+                
+                # 详细日志：写入文件便于调试
+                with open("stream_events.log", "a", encoding="utf-8") as f:
+                    f.write(f"[STREAM] Event: {kind} | Name: {name}\n")
+                    if kind in ["on_tool_start", "on_tool_end"]:
+                        data = event.get("data", {})
+                        f.write(f"  Data keys: {data.keys() if isinstance(data, dict) else type(data)}\n")
+                        if kind == "on_tool_end":
+                            output = data.get("output", "")
+                            f.write(f"  Output: {str(output)[:500]}\n")
+                        f.write("\n")
+                
+                # LLM Token 流式输出
+                if kind == "on_chat_model_stream":
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk and hasattr(chunk, "content") and chunk.content:
+                        final_answer += chunk.content
+                        yield f"data: {json.dumps({'type': 'token', 'data': chunk.content})}\n\n"
+                
+                # 工具调用开始
+                elif kind == "on_tool_start":
+                    tool_name = name
+                    tool_input = event.get("data", {}).get("input", {})
+                    
+                    if tool_name in TOOL_DISPLAY:
+                        step = {
+                            "tool": TOOL_DISPLAY[tool_name],
+                            "tool_id": tool_name,
+                            "summary": "执行中...",
+                            "status": "running",
+                        }
+                        if tool_name == "execute_sql":
+                            current_sql = tool_input.get("sql")
+                            step["sql"] = current_sql
+                        execution_steps.append(step)
+                        yield f"data: {json.dumps({'type': 'execution_steps', 'data': make_serializable(execution_steps)})}\n\n"
+                
+                # 工具调用结束
+                elif kind == "on_tool_end":
+                    tool_name = name
+                    output_obj = event.get("data", {}).get("output", "")
+                    
+                    # 处理 output 对象 - 提取 content 属性
+                    if hasattr(output_obj, "content"):
+                        output = output_obj.content
+                    else:
+                        output = str(output_obj)
+                    
+                    # 处理 write_todos 工具
+                    if tool_name == "write_todos":
+                        try:
+                            # 从 Command 对象中提取 todos
+                            if hasattr(output_obj, "update") and "todos" in getattr(output_obj, "update", {}):
+                                todos = output_obj.update.get("todos", [])
+                            elif isinstance(output, str) and "todos" in output:
+                                import re
+                                # 尝试解析 todos
+                                todos_match = re.search(r"'todos':\s*\[(.*?)\]", output, re.DOTALL)
+                                if todos_match:
+                                    # 简化解析：提取 content 字段
+                                    contents = re.findall(r"'content':\s*'([^']+)'", output)
+                                    statuses = re.findall(r"'status':\s*'([^']+)'", output)
+                                    todos = [{"content": c, "status": s} for c, s in zip(contents, statuses)]
+                            else:
+                                todos = []
+                            
+                            if todos:
+                                yield f"data: {json.dumps({'type': 'todo_list', 'data': make_serializable(todos)})}\n\n"
+                        except Exception as e:
+                            print(f"[STREAM] Error parsing write_todos: {e}")
+                    
+                    # 处理其他核心工具
+                    elif tool_name in TOOL_DISPLAY and execution_steps:
+                        # 更新最后一个步骤
+                        for step in reversed(execution_steps):
+                            if step.get("tool_id") == tool_name:
+                                step["status"] = "success"
+                                
+                                # 根据工具类型设置摘要
+                                if tool_name == "get_database_schema":
+                                    import re
+                                    tables = re.findall(r'CREATE TABLE (\w+)', output)
+                                    step["summary"] = f"发现 {len(tables)} 张表"
+                                elif tool_name == "search_examples":
+                                    # 解析样例数量并发送样例数据
+                                    try:
+                                        import json as json_mod
+                                        if "[]" in output or output.strip() == "[]":
+                                            step["summary"] = "无相似样例"
+                                        elif "[" in output:
+                                            # 尝试解析 JSON 格式的样例
+                                            try:
+                                                examples_data = json_mod.loads(output)
+                                                if isinstance(examples_data, list) and len(examples_data) > 0:
+                                                    step["summary"] = f"发现 {len(examples_data)} 个样例"
+                                                    # 发送样例数据给前端
+                                                    yield f"data: {json.dumps({'type': 'examples', 'data': make_serializable(examples_data)})}\n\n"
+                                                else:
+                                                    step["summary"] = "无相似样例"
+                                            except:
+                                                # 非标准 JSON，用正则解析
+                                                import re
+                                                examples = re.findall(r'\{[^{}]+\}', output)
+                                                if examples:
+                                                    step["summary"] = f"发现 {len(examples)} 个样例"
+                                                else:
+                                                    step["summary"] = "检索完成"
+                                        else:
+                                            step["summary"] = "检索完成"
+                                    except:
+                                        step["summary"] = "检索完成"
+                                elif tool_name == "validate_sql":
+                                    step["summary"] = "验证通过" if "true" in output.lower() else "验证失败"
+                                elif tool_name == "execute_sql":
+                                    try:
+                                        import json as json_mod
+                                        result_data = json_mod.loads(output) if isinstance(output, str) else output
+                                        if result_data.get("success"):
+                                            row_count = result_data.get("row_count", 0)
+                                            step["summary"] = "SQL 已生成"
+                                            sql_result = result_data
+                                            
+                                            # 添加单独的"执行结果"步骤
+                                            result_step = {
+                                                "tool": "📊 执行结果",
+                                                "tool_id": "execute_result",
+                                                "summary": f"返回 {row_count} 行",
+                                                "status": "success",
+                                                "result_data": result_data,
+                                            }
+                                            execution_steps.append(result_step)
+                                            
+                                            # 发送完整的执行结果数据
+                                            yield f"data: {json.dumps({'type': 'result', 'data': make_serializable(result_data)})}\n\n"
+                                        else:
+                                            step["summary"] = f"失败: {result_data.get('error', '')[:30]}"
+                                            step["status"] = "error"
+                                    except:
+                                        step["summary"] = "执行完成"
+                                
+                                break
+                        
+                        yield f"data: {json.dumps({'type': 'execution_steps', 'data': make_serializable(execution_steps)})}\n\n"
             
-            # Send sub_questions with step results (Graph 模式)
-            sub_questions = result.get("sub_questions")
-            sub_results = result.get("sub_results") or {}
-            if sub_questions:
-                # Combine questions with their results (sub_results is keyed by sq_id like 'sq1', 'sq2')
-                enriched_subs = []
-                for i, sq in enumerate(sub_questions):
-                    sq_id = f"sq{i + 1}"  # Generate key: sq1, sq2, sq3...
-                    enriched = {
-                        "question": sq.get("question", ""),
-                        "sql": sq.get("sql", ""),
-                    }
-                    # Add result if available
-                    if sq_id in sub_results:
-                        enriched["result"] = make_serializable(sub_results[sq_id])
-                    enriched_subs.append(enriched)
-                yield f"data: {json.dumps({'type': 'sub_questions', 'data': enriched_subs})}\n\n"
+            # 真流式已通过 token 事件完成，不需要再发送 answer
+            # 如果没有收到任何 token，final_answer 会是空的，这时可以发送一个提示
+            if not final_answer:
+                yield f"data: {json.dumps({'type': 'answer', 'data': '处理完成'})}\n\n"
             
-            # Send SQL
-            if result.get("sql"):
-                yield f"data: {json.dumps({'type': 'sql', 'data': result['sql']})}\n\n"
+            # 保存到会话历史（使用原有的 ask 方法逻辑）
+            # 这里简化处理，实际应该调用 conversation 存储
             
-            # Send result
-            if result.get("result"):
-                result_data = make_serializable(result['result'])
-                yield f"data: {json.dumps({'type': 'result', 'data': result_data})}\n\n"
-            
-            # Send answer
-            yield f"data: {json.dumps({'type': 'answer', 'data': result.get('answer', '')})}\n\n"
-            
-            # Done
-            yield f"data: {json.dumps({'type': 'done', 'data': result.get('conversation_id', '')})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'data': conversation_id or ''})}\n\n"
             print("[SSE] Complete")
             
         except Exception as e:

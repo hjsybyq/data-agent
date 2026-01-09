@@ -62,7 +62,7 @@ def search_examples(question: str, top_k: int = 3) -> str:
     
     try:
         # Search for similar examples
-        results = _rag_store.search_similar(question, k=top_k)
+        results = _rag_store.search_examples(question, k=top_k)
         
         if not results:
             return "No similar examples found. Generating SQL based on schema only."
@@ -103,10 +103,10 @@ async def search_examples_async(question: str, top_k: int = 3) -> str:
     
     try:
         # Check if store has async method
-        if hasattr(_rag_store, 'asearch_similar'):
-            results = await _rag_store.asearch_similar(question, k=top_k)
+        if hasattr(_rag_store, 'asearch_examples'):
+            results = await _rag_store.asearch_examples(question, k=top_k)
         else:
-            results = _rag_store.search_similar(question, k=top_k)
+            results = _rag_store.search_examples(question, k=top_k)
         
         if not results:
             return "No similar examples found. Generating SQL based on schema only."
