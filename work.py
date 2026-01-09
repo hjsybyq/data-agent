@@ -183,7 +183,7 @@ vn = DataAgent(
     llm_provider="openai_compatible",
     base_url="https://api.siliconflow.cn/v1",
     llm_model="Qwen/Qwen3-30B-A3B-Instruct-2507",
-    llm_api_key="sk-cidkntehcueyomwlamjivnosmcworzwmrokzajrdlpdlfchz",
+    llm_api_key="sk-",
     database_connection=engine.connect(),  # 真实数据库连接
     embedding_model="BAAI/bge-m3",  # SiliconFlow 向量模型
     # 新 Agent 模式配置
