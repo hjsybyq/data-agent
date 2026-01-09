@@ -129,7 +129,7 @@ async def lifespan(app: FastAPI):
         llm_provider="openai_compatible",
         base_url="https://api.siliconflow.cn/v1",
         llm_model="Qwen/Qwen3-30B-A3B-Instruct-2507",
-        llm_api_key="sk-cidkntehcueyomwlamjivnosmcworzwmrokzajrdlpdlfchz",
+        llm_api_key="sk-",
         database_connection=conn,
         embedding_model="BAAI/bge-m3",
         use_agent_mode=True,  # 启用新的 Agent 模式
