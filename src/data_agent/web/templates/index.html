@@ -101,7 +101,7 @@
                 </button>
                 <button @click="showTraining = true"
                     class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition">
-                    📚 训练数据
+                    📚 样例SQL
                 </button>
             </div>
         </header>
@@ -157,21 +157,148 @@
                                 </div>
                             </template>
 
-                            <!-- SQL -->
-                            <template x-if="msg.sql">
-                                <div class="bg-gray-800 rounded-xl overflow-hidden">
-                                    <div class="flex items-center justify-between px-4 py-2 bg-gray-700/50">
-                                        <span class="text-sm text-gray-400">📝 SQL</span>
-                                        <button @click="copyToClipboard(msg.sql)"
-                                            class="text-xs px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded transition">
-                                            复制
-                                        </button>
+                            <!-- Examples -->
+                            <template x-if="msg.examples && msg.examples.length > 0">
+                                <div class="bg-gray-800/50 border border-gray-700 rounded-xl p-4 mb-3">
+                                    <div class="text-sm text-gray-400 mb-2 flex items-center gap-2">
+                                        <span>📚 参考样例</span>
+                                        <span class="text-xs bg-gray-700 px-2 py-0.5 rounded-full"
+                                            x-text="msg.examples.length"></span>
                                     </div>
-                                    <pre><code class="language-sql" x-text="msg.sql"></code></pre>
+                                    <div class="space-y-2">
+                                        <template x-for="(ex, i) in msg.examples" :key="i">
+                                            <div class="text-xs bg-gray-900/50 p-2 rounded hover:bg-gray-700/50 transition cursor-pointer"
+                                                @click="question = ex.question; $refs.input.focus()">
+                                                <div class="text-blue-300 mb-1" x-text="ex.question"></div>
+                                                <div class="font-mono text-gray-500 truncate" x-text="ex.sql"></div>
+                                            </div>
+                                        </template>
+                                    </div>
                                 </div>
                             </template>
 
-                            <!-- Sub Questions with Step Results -->
+                            <!-- TodoList Task Planning (Agent Mode) - 复杂问题规划 -->
+                            <template x-if="msg.todoList && msg.todoList.length > 0">
+                                <div
+                                    class="bg-gradient-to-r from-green-900/30 to-emerald-900/30 rounded-xl p-4 border border-green-700/30 mb-3">
+                                    <div class="text-sm text-green-300 mb-2 font-semibold">📋 任务规划</div>
+                                    <div class="space-y-1">
+                                        <template x-for="(todo, i) in msg.todoList" :key="i">
+                                            <div class="flex items-center gap-2 text-sm">
+                                                <span
+                                                    x-text="todo.status === 'completed' ? '✅' : (todo.status === 'in_progress' ? '🔄' : '⏳')"></span>
+                                                <span
+                                                    :class="todo.status === 'completed' ? 'text-gray-400' : 'text-gray-200'"
+                                                    x-text="todo.content || todo.description || todo"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- Execution Steps (Agent Mode) - 行展示 -->
+                            <template x-if="msg.executionSteps && msg.executionSteps.length > 0">
+                                <div class="bg-gray-800/50 rounded-xl p-3 mb-3 border border-gray-700">
+                                    <div class="text-xs text-gray-500 mb-2">🔧 执行过程</div>
+                                    <div class="space-y-2">
+                                        <template x-for="(step, i) in msg.executionSteps" :key="i">
+                                            <div>
+                                                <div class="flex items-center gap-2 text-sm">
+                                                    <span
+                                                        :class="step.status === 'success' ? 'text-green-400' : 'text-red-400'"
+                                                        x-text="step.tool"></span>
+                                                    <span class="text-gray-500">—</span>
+                                                    <span class="text-gray-400 text-xs" x-text="step.summary"></span>
+                                                </div>
+                                                <template x-if="step.sql">
+                                                    <div>
+                                                        <!-- SQL Code -->
+                                                        <div class="mt-1 ml-4 text-xs font-mono text-blue-300 bg-gray-900/50 rounded p-2 overflow-x-auto"
+                                                            x-text="step.sql"></div>
+
+                                                        <!-- Result Data Preview (for this step) -->
+                                                        <template
+                                                            x-if="step.result_data && step.result_data.data && step.result_data.data.length > 0">
+                                                            <div>
+                                                                <!-- Result Label -->
+                                                                <div
+                                                                    class="flex items-center gap-2 mt-3 mb-1 ml-4 text-xs text-gray-500">
+                                                                    <span class="text-purple-400">📊 执行结果</span>
+                                                                    <span class="text-gray-600 text-[10px]"
+                                                                        x-text="'(' + (step.result_data.row_count || step.result_data.data.length) + ' 行)'"></span>
+                                                                </div>
+
+                                                                <div
+                                                                    class="ml-4 overflow-x-auto max-h-40 border border-gray-700 rounded-lg">
+                                                                    <table
+                                                                        class="w-full text-xs text-left text-gray-400">
+                                                                        <thead
+                                                                            class="bg-gray-700/50 text-gray-300 sticky top-0">
+                                                                            <tr>
+                                                                                <template
+                                                                                    x-if="step.result_data.columns">
+                                                                                    <template
+                                                                                        x-for="col in step.result_data.columns"
+                                                                                        :key="col">
+                                                                                        <th class="px-3 py-1.5 font-medium whitespace-nowrap"
+                                                                                            x-text="col"></th>
+                                                                                    </template>
+                                                                                </template>
+                                                                                <!-- Fallback if no columns provided -->
+                                                                                <template
+                                                                                    x-if="!step.result_data.columns && step.result_data.data.length > 0">
+                                                                                    <template
+                                                                                        x-for="(val, key) in step.result_data.data[0]"
+                                                                                        :key="key">
+                                                                                        <th class="px-3 py-1.5 font-medium whitespace-nowrap"
+                                                                                            x-text="key"></th>
+                                                                                    </template>
+                                                                                </template>
+                                                                            </tr>
+                                                                        </thead>
+                                                                        <tbody class="divide-y divide-gray-700/50">
+                                                                            <template
+                                                                                x-for="(row, idx) in step.result_data.data.slice(0, 5)"
+                                                                                :key="idx">
+                                                                                <tr class="hover:bg-gray-700/30">
+                                                                                    <!-- Check if data is array (columns provided usually) or dict -->
+                                                                                    <template x-if="Array.isArray(row)">
+                                                                                        <template x-for="val in row">
+                                                                                            <td class="px-3 py-1.5 whitespace-nowrap"
+                                                                                                x-text="val"></td>
+                                                                                        </template>
+                                                                                    </template>
+                                                                                    <template
+                                                                                        x-if="!Array.isArray(row)">
+                                                                                        <template
+                                                                                            x-for="(val, key) in row"
+                                                                                            :key="key">
+                                                                                            <td class="px-3 py-1.5 whitespace-nowrap"
+                                                                                                x-text="val"></td>
+                                                                                        </template>
+                                                                                    </template>
+                                                                                </tr>
+                                                                            </template>
+                                                                        </tbody>
+                                                                    </table>
+                                                                    <div x-show="step.result_data.data.length > 5"
+                                                                        class="px-3 py-1 text-xs text-gray-500 bg-gray-800/50 text-center italic">
+                                                                        (仅展示前 5 行，共 <span
+                                                                            x-text="step.result_data.data.length"></span>
+                                                                        行)
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </template>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- Sub Questions with Step Results (Graph Mode - Legacy) -->
                             <template x-if="msg.subQuestions && msg.subQuestions.length > 0">
                                 <div
                                     class="bg-gradient-to-r from-purple-900/30 to-blue-900/30 rounded-xl p-4 border border-purple-700/30">
@@ -208,48 +335,6 @@
                             </template>
 
                             <!-- Result Table -->
-                            <template x-if="msg.result && msg.result.data && msg.result.data.length > 0">
-                                <div class="bg-gray-800 rounded-xl overflow-hidden">
-                                    <div class="flex items-center justify-between px-4 py-2 bg-gray-700/50">
-                                        <span class="text-sm text-gray-400">
-                                            📊 结果 (<span x-text="msg.result.row_count || msg.result.data.length"></span>
-                                            行)
-                                        </span>
-                                        <button @click="downloadCSV(msg.result)"
-                                            class="text-xs px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded transition">
-                                            下载 CSV
-                                        </button>
-                                    </div>
-                                    <div class="overflow-x-auto">
-                                        <table class="w-full text-sm">
-                                            <thead class="bg-gray-700/30">
-                                                <tr>
-                                                    <template
-                                                        x-for="col in msg.result.columns || Object.keys(msg.result.data[0])"
-                                                        :key="col">
-                                                        <th class="px-4 py-2 text-left text-gray-400" x-text="col"></th>
-                                                    </template>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <template x-for="(row, ri) in msg.result.data.slice(0, 10)" :key="ri">
-                                                    <tr class="border-t border-gray-700/50 hover:bg-gray-700/20">
-                                                        <template x-for="(val, key) in row" :key="key">
-                                                            <td class="px-4 py-2" x-text="val"></td>
-                                                        </template>
-                                                    </tr>
-                                                </template>
-                                            </tbody>
-                                        </table>
-                                        <template x-if="msg.result.data.length > 10">
-                                            <div class="px-4 py-2 text-sm text-gray-500 text-center">
-                                                ... 还有 <span x-text="msg.result.data.length - 10"></span> 行
-                                            </div>
-                                        </template>
-                                    </div>
-                                </div>
-                            </template>
-
                             <!-- Chart -->
                             <template x-if="msg.result && canShowChart(msg.result)">
                                 <div class="bg-gray-800 rounded-xl p-4">
@@ -312,11 +397,11 @@
         <div x-show="showTraining" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
             @click.self="showTraining = false">
             <div class="bg-gray-800 rounded-2xl p-6 w-full max-w-2xl max-h-[80vh] overflow-y-auto">
-                <h2 class="text-xl font-bold mb-4">📚 训练数据</h2>
+                <h2 class="text-xl font-bold mb-4">📚 样例SQL</h2>
 
                 <!-- Add Training -->
                 <div class="bg-gray-700/50 rounded-xl p-4 mb-4">
-                    <h3 class="text-sm font-semibold mb-2">添加训练样例</h3>
+                    <h3 class="text-sm font-semibold mb-2">添加SQL样例</h3>
                     <div class="space-y-2">
                         <input type="text" x-model="newExample.question" placeholder="问题"
                             class="w-full px-3 py-2 bg-gray-700 rounded-lg text-sm">
@@ -448,7 +533,11 @@
                         sql: null,
                         result: null,
                         answer: null,
-                        subQuestions: null
+                        subQuestions: null,
+                        todoList: null,  // Agent mode: task planning
+                        executionSteps: null,  // Agent mode: execution steps
+                        showSteps: false,  // Toggle for execution steps
+                        examples: null
                     });
 
                     // Scroll to bottom
@@ -470,11 +559,23 @@
                             case 'thinking':
                                 self.messages[msgIndex].thinking = data.data;
                                 break;
+                            case 'examples':
+                                self.messages[msgIndex].examples = data.data;
+                                break;
                             case 'sql':
                                 console.log('[SSE] Got SQL:', data.data);
                                 self.messages[msgIndex].thinking = null;
                                 self.messages[msgIndex].sql = data.data;
                                 self.$nextTick(() => hljs.highlightAll());
+                                break;
+                            case 'todo_list':
+                                console.log('[SSE] Got todo_list:', data.data);
+                                self.messages[msgIndex].thinking = null;
+                                self.messages[msgIndex].todoList = data.data;
+                                break;
+                            case 'execution_steps':
+                                console.log('[SSE] Got execution_steps:', data.data);
+                                self.messages[msgIndex].executionSteps = data.data;
                                 break;
                             case 'sub_questions':
                                 self.messages[msgIndex].thinking = null;  // Clear thinking

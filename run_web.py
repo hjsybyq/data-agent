@@ -26,6 +26,22 @@ from sqlalchemy import create_engine
 
 from data_agent import DataAgent
 
+import numpy as np
+
+def make_serializable(obj):
+    """Recursively convert numpy types to native Python types for JSON serialization."""
+    if isinstance(obj, (np.integer, int)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, float)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {k: make_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [make_serializable(item) for item in obj]
+    return obj
+
 # ============================================================
 # 配置
 # ============================================================
@@ -108,16 +124,20 @@ async def lifespan(app: FastAPI):
     conn = engine.connect()
     print("✓ 数据库连接成功")
     
-    # Agent
+    # Agent (启用新的 Agent 模式)
     agent = DataAgent(
         llm_provider="openai_compatible",
         base_url="https://api.siliconflow.cn/v1",
         llm_model="Qwen/Qwen3-30B-A3B-Instruct-2507",
         llm_api_key="sk-cidkntehcueyomwlamjivnosmcworzwmrokzajrdlpdlfchz",
         database_connection=conn,
+        embedding_model="BAAI/bge-m3",
+        use_agent_mode=True,  # 启用新的 Agent 模式
+        enable_hitl=False,     # 关闭人工审核 (避免拦截 execute_sql)
+        max_model_calls=20,    # 增加调用次数限制
     )
     agent.set_schema(CHINOOK_SCHEMA)
-    print("✓ DataAgent 已配置")
+    print("✓ DataAgent 已配置 (Agent 模式)")
     
     print("\n" + "=" * 50)
     print("🌐 访问 http://localhost:8000")
@@ -181,10 +201,27 @@ async def ask_stream(
                 conversation_id=conversation_id,
             )
             
+            # Send examples if any
+            if result.get("similar_examples"):
+                examples = make_serializable(result["similar_examples"])
+                yield f"data: {json.dumps({'type': 'examples', 'data': examples})}\n\n"
+            
             sql_preview = (result.get('sql') or 'N/A')[:50]
             print(f"[SSE] Got result: {sql_preview}...")
             
-            # Send sub_questions with step results
+            # Send todo_list (Agent 模式任务规划)
+            if result.get("todo_list"):
+                todo_list = make_serializable(result["todo_list"])
+                yield f"data: {json.dumps({'type': 'todo_list', 'data': todo_list})}\n\n"
+                print(f"[SSE] Sent todo_list: {len(todo_list)} items")
+            
+            # Send execution_steps (Agent 模式执行过程)
+            if result.get("execution_steps"):
+                execution_steps = make_serializable(result["execution_steps"])
+                yield f"data: {json.dumps({'type': 'execution_steps', 'data': execution_steps})}\n\n"
+                print(f"[SSE] Sent execution_steps: {len(execution_steps)} steps")
+            
+            # Send sub_questions with step results (Graph 模式)
             sub_questions = result.get("sub_questions")
             sub_results = result.get("sub_results") or {}
             if sub_questions:
@@ -198,7 +235,7 @@ async def ask_stream(
                     }
                     # Add result if available
                     if sq_id in sub_results:
-                        enriched["result"] = sub_results[sq_id]
+                        enriched["result"] = make_serializable(sub_results[sq_id])
                     enriched_subs.append(enriched)
                 yield f"data: {json.dumps({'type': 'sub_questions', 'data': enriched_subs})}\n\n"
             
@@ -208,7 +245,8 @@ async def ask_stream(
             
             # Send result
             if result.get("result"):
-                yield f"data: {json.dumps({'type': 'result', 'data': result['result']})}\n\n"
+                result_data = make_serializable(result['result'])
+                yield f"data: {json.dumps({'type': 'result', 'data': result_data})}\n\n"
             
             # Send answer
             yield f"data: {json.dumps({'type': 'answer', 'data': result.get('answer', '')})}\n\n"

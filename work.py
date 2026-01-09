@@ -186,10 +186,57 @@ vn = DataAgent(
     llm_api_key="sk-cidkntehcueyomwlamjivnosmcworzwmrokzajrdlpdlfchz",
     database_connection=engine.connect(),  # 真实数据库连接
     embedding_model="BAAI/bge-m3",  # SiliconFlow 向量模型
+    # 新 Agent 模式配置
+    use_agent_mode=True,           # 启用 LangChain 1.2.0 create_agent 架构
+    enable_hitl=False,             # 是否启用人工审核（暂时关闭便于测试）
+    max_model_calls=15,            # 最大模型调用次数，防止无限循环
 )
 
 vn.set_schema(CHINOOK_SCHEMA)
-print("✓ DataAgent 初始化完成\n")
+print("✓ DataAgent 初始化完成 (Agent 模式)\n")
+
+
+def display_agent_result(result: dict, question: str):
+    """展示 Agent 模式的执行结果，包括任务规划和执行过程"""
+    print(f"问题: {question}")
+    
+    # 展示任务规划
+    todo_list = result.get('todo_list', [])
+    if todo_list:
+        print("\n📋 [任务规划]")
+        for i, todo in enumerate(todo_list, 1):
+            if isinstance(todo, dict):
+                status_icon = {"pending": "⏳", "in_progress": "🔄", "completed": "✅"}.get(
+                    todo.get("status", "pending"), "⏳"
+                )
+                print(f"  {status_icon} {i}. {todo.get('description', todo)}")
+            else:
+                print(f"  ⏳ {i}. {todo}")
+    
+    # 展示执行步骤
+    execution_steps = result.get('execution_steps', [])
+    if execution_steps:
+        print("\n🔧 [执行过程]")
+        for i, step in enumerate(execution_steps, 1):
+            tool_name = step.get('tool', 'unknown')
+            # 简化显示
+            result_preview = step.get('result', '')[:100]
+            if len(step.get('result', '')) > 100:
+                result_preview += "..."
+            print(f"  {i}. {tool_name}: {result_preview}")
+    
+    # 展示 SQL
+    print(f"\n📝 SQL: {result.get('sql', 'None')}")
+    
+    # 展示结果
+    sql_result = result.get('result')
+    if sql_result:
+        print(f"📊 结果: {sql_result}")
+    
+    # 展示最终答案
+    print(f"\n💬 答案: {result.get('answer', '')}")
+    print("-" * 60)
+
 
 # ============================================================
 # 测试 1: 简单查询
@@ -199,23 +246,17 @@ print("测试 1: 简单查询")
 print("=" * 60)
 
 result = vn.ask("数据库中有多少位客户？")
-print(f"问题: 数据库中有多少位客户？")
-print(f"SQL: {result['sql']}")
-print(f"结果: {result['result']}")
-print(f"答案: {result['answer']}")
+display_agent_result(result, "数据库中有多少位客户？")
 
 # ============================================================
-# 测试 2: 聚合查询
-# ============================================================
-print("\n" + "=" * 60)
-print("测试 2: 聚合查询")
-print("=" * 60)
+# # 测试 2: 聚合查询
+# # ============================================================
+# print("\n" + "=" * 60)
+# print("测试 2: 聚合查询")
+# print("=" * 60)
 
-result = vn.ask("销售额最高的前5个国家是哪些？")
-print(f"问题: 销售额最高的前5个国家是哪些？")
-print(f"SQL: {result['sql']}")
-print(f"结果: {result['result']}")
-print(f"答案: {result['answer']}")
+# result = vn.ask("销售额最高的前5个国家是哪些？")
+# display_agent_result(result, "销售额最高的前5个国家是哪些？")
 
 # # ============================================================
 # # 测试 3: JOIN 查询
@@ -329,63 +370,63 @@ print(f"答案: {result['answer']}")
 # print(f"\nSQL: {result2['sql']}")
 # print(f"答案: {result2['answer']}")
 
-# ============================================================
-# 测试 8: 多步依赖问题（更复杂，应触发拆分）
-# ============================================================
-print("\n" + "=" * 60)
-print("测试 8: 多步依赖问题（应触发拆分）")
-print("=" * 60)
+# # ============================================================
+# # 测试 8: 多步依赖问题（更复杂，应触发拆分）
+# # ============================================================
+# print("\n" + "=" * 60)
+# print("测试 8: 多步依赖问题（应触发拆分）")
+# print("=" * 60)
 
-# 这类问题有明确的多步依赖关系
-decompose_question = """
-找出购买金额最高的客户是谁，然后分析这个客户的购买偏好：
-1. 他最喜欢哪个流派的音乐？
-2. 他购买次数最多的艺术家是谁？
-3. 他的平均每次购买金额是多少？
-"""
-print(f"\n问题: {decompose_question}")
+# # 这类问题有明确的多步依赖关系
+# decompose_question = """
+# 找出购买金额最高的客户是谁，然后分析这个客户的购买偏好：
+# 1. 他最喜欢哪个流派的音乐？
+# 2. 他购买次数最多的艺术家是谁？
+# 3. 他的平均每次购买金额是多少？
+# """
+# print(f"\n问题: {decompose_question}")
 
-result3 = vn.ask(decompose_question)
+# result3 = vn.ask(decompose_question)
 
-# 显示问题分析结果
-analysis = result3.get('question_analysis')
-if analysis:
-    print(f"\n[问题分析]")
-    print(f"  复杂度: {analysis.get('complexity', 'unknown')}")
-    print(f"  需要拆分: {analysis.get('requires_decomposition', False)}")
-    print(f"  原因: {analysis.get('reasoning', 'N/A')}")
+# # 显示问题分析结果
+# analysis = result3.get('question_analysis')
+# if analysis:
+#     print(f"\n[问题分析]")
+#     print(f"  复杂度: {analysis.get('complexity', 'unknown')}")
+#     print(f"  需要拆分: {analysis.get('requires_decomposition', False)}")
+#     print(f"  原因: {analysis.get('reasoning', 'N/A')}")
 
-# 显示子问题和执行过程
-sub_questions = result3.get('sub_questions')
-if sub_questions:
-    print(f"\n[问题拆分] - 共 {len(sub_questions)} 个子问题:")
-    for i, sq in enumerate(sub_questions, 1):
-        print(f"\n  子问题 {i}: {sq.get('question', 'N/A')}")
-        print(f"    目的: {sq.get('purpose', 'N/A')}")
-        print(f"    依赖: {sq.get('depends_on', [])}")
-        if sq.get('sql'):
-            print(f"    SQL: {sq.get('sql')[:100]}...")
-        if sq.get('result'):
-            result_data = sq['result']
-            if result_data.get('success'):
-                data = result_data.get('data', [])
-                print(f"    结果: {data[:2]}..." if len(data) > 2 else f"    结果: {data}")
-            else:
-                print(f"    ❌ 错误: {result_data.get('error', 'Unknown')}")
-else:
-    # 没有拆分，显示单一SQL
-    print(f"\n[直接生成 SQL]")
-    print(f"SQL: {result3['sql']}")
+# # 显示子问题和执行过程
+# sub_questions = result3.get('sub_questions')
+# if sub_questions:
+#     print(f"\n[问题拆分] - 共 {len(sub_questions)} 个子问题:")
+#     for i, sq in enumerate(sub_questions, 1):
+#         print(f"\n  子问题 {i}: {sq.get('question', 'N/A')}")
+#         print(f"    目的: {sq.get('purpose', 'N/A')}")
+#         print(f"    依赖: {sq.get('depends_on', [])}")
+#         if sq.get('sql'):
+#             print(f"    SQL: {sq.get('sql')[:100]}...")
+#         if sq.get('result'):
+#             result_data = sq['result']
+#             if result_data.get('success'):
+#                 data = result_data.get('data', [])
+#                 print(f"    结果: {data[:2]}..." if len(data) > 2 else f"    结果: {data}")
+#             else:
+#                 print(f"    ❌ 错误: {result_data.get('error', 'Unknown')}")
+# else:
+#     # 没有拆分，显示单一SQL
+#     print(f"\n[直接生成 SQL]")
+#     print(f"SQL: {result3['sql']}")
 
-print(f"\n[最终答案]")
-print(f"{result3['answer']}")
+# print(f"\n[最终答案]")
+# print(f"{result3['answer']}")
 
-# 检查是否触发了问题拆分
-if sub_questions:
-    print(f"\n✓ 问题被拆分为 {len(sub_questions)} 个子问题")
-else:
-    print("\n⚠ 问题未被拆分（LLM判断可用单一查询解决）")
+# # 检查是否触发了问题拆分
+# if sub_questions:
+#     print(f"\n✓ 问题被拆分为 {len(sub_questions)} 个子问题")
+# else:
+#     print("\n⚠ 问题未被拆分（LLM判断可用单一查询解决）")
 
-print("\n" + "=" * 60)
-print("✅ 所有测试完成!")
-print("=" * 60)
+# print("\n" + "=" * 60)
+# print("✅ 所有测试完成!")
+# print("=" * 60)

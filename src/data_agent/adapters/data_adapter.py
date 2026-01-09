@@ -71,6 +71,15 @@ from data_agent.storage.conversation import (
     Session,
 )
 
+# New Agent imports
+try:
+    from data_agent.agent.agent import create_text2sql_agent, Text2SQLAgentExecutor
+    from data_agent.tools.example_search_tool import set_rag_store
+    from data_agent.tools.ask_user_tool import clarification_state
+    AGENT_MODE_AVAILABLE = True
+except ImportError:
+    AGENT_MODE_AVAILABLE = False
+
 
 @dataclass
 class AgentConfig:
@@ -92,6 +101,11 @@ class AgentConfig:
     # Database configuration
     database_schema: Optional[str] = None
     database_connection: Optional[Any] = None
+    
+    # New Agent mode (LangChain 1.2.0 create_agent)
+    use_agent_mode: bool = False
+    enable_hitl: bool = False  # Human-in-the-loop for SQL execution
+    max_model_calls: int = 10  # Prevent infinite loops
 
 
 class DataAgent:
@@ -129,6 +143,10 @@ class DataAgent:
         enable_rag: bool = True,
         rag_persist_dir: Optional[str] = None,
         embedding_model: Optional[str] = None,
+        # New Agent mode parameters
+        use_agent_mode: bool = False,
+        enable_hitl: bool = False,
+        max_model_calls: int = 10,
         **kwargs,
     ):
         """
@@ -152,6 +170,9 @@ class DataAgent:
             database_connection: SQLAlchemy connection for SQL execution
             enable_rag: Whether to enable RAG-based example retrieval
             rag_persist_dir: Directory for RAG persistence (None for in-memory)
+            use_agent_mode: Use new LangChain 1.2.0 create_agent instead of LangGraph nodes
+            enable_hitl: Enable human-in-the-loop for SQL execution (agent mode only)
+            max_model_calls: Maximum model calls to prevent infinite loops (agent mode only)
         """
         self.config = AgentConfig(
             llm_provider=llm_provider,
@@ -162,8 +183,89 @@ class DataAgent:
             max_history_turns=max_history_turns,
             use_simple_graph=use_simple_graph,
             database_connection=database_connection,
+            use_agent_mode=use_agent_mode,
+            enable_hitl=enable_hitl,
+            max_model_calls=max_model_calls,
         )
         
+        # Store additional config
+        self._base_url = base_url
+        self._use_agent_mode = use_agent_mode and AGENT_MODE_AVAILABLE
+        
+        # Configure database connection
+        if database_connection:
+            set_database_connection(database_connection)
+        else:
+            enable_mock_mode()
+        
+        self._schema: Optional[str] = None
+        
+        # Conversation storage for multi-turn support
+        self._conversation_store = ConversationStore()
+        
+        # Initialize mode-specific components
+        if self._use_agent_mode:
+            # New Agent mode using LangChain 1.2.0 create_agent
+            self._init_agent_mode(
+                model=llm_model or "gpt-4o",
+                api_key=llm_api_key,
+                base_url=base_url,
+                temperature=temperature,
+                enable_hitl=enable_hitl,
+                max_model_calls=max_model_calls,
+            )
+        else:
+            # Legacy LangGraph node mode
+            self._init_graph_mode(
+                llm_provider=llm_provider,
+                llm_model=llm_model,
+                llm_api_key=llm_api_key,
+                base_url=base_url,
+                temperature=temperature,
+                use_simple_graph=use_simple_graph,
+            )
+        
+        # RAG vector store for example retrieval
+        self._enable_rag = enable_rag
+        self._vector_store = None
+        if enable_rag:
+            self._init_rag(
+                llm_api_key=llm_api_key,
+                base_url=base_url,
+                embedding_model=embedding_model,
+                rag_persist_dir=rag_persist_dir,
+            )
+    
+    def _init_agent_mode(
+        self,
+        model: str,
+        api_key: Optional[str],
+        base_url: Optional[str],
+        temperature: float,
+        enable_hitl: bool,
+        max_model_calls: int,
+    ):
+        """Initialize new Agent mode components."""
+        self._agent = create_text2sql_agent(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=temperature,
+            enable_hitl=enable_hitl,
+            max_model_calls=max_model_calls,
+        )
+        self._graph = None  # Not used in agent mode
+    
+    def _init_graph_mode(
+        self,
+        llm_provider: str,
+        llm_model: Optional[str],
+        llm_api_key: Optional[str],
+        base_url: Optional[str],
+        temperature: float,
+        use_simple_graph: bool,
+    ):
+        """Initialize legacy LangGraph node mode components."""
         # Configure LLM with base_url support
         llm_config = LLMConfig(
             provider=llm_provider,  # type: ignore
@@ -174,39 +276,42 @@ class DataAgent:
         )
         configure_llm(llm_config)
         
-        # Configure database connection
-        if database_connection:
-            set_database_connection(database_connection)
-        else:
-            enable_mock_mode()
-        
         # Create the graph
         if use_simple_graph:
             self._graph = create_simple_graph()
         else:
             self._graph = create_agent_graph()
         
-        self._schema: Optional[str] = None
+        self._agent = None  # Not used in graph mode
+    
+    def _init_rag(
+        self,
+        llm_api_key: Optional[str],
+        base_url: Optional[str],
+        embedding_model: Optional[str],
+        rag_persist_dir: Optional[str],
+    ):
+        """Initialize RAG vector store."""
+        from data_agent.rag import FAISSStore, EmbeddingConfig, configure_embeddings
         
-        # Conversation storage for multi-turn support
-        self._conversation_store = ConversationStore()
+        # Configure embeddings
+        embed_config = EmbeddingConfig(
+            provider="openai",
+            model=embedding_model or "text-embedding-3-small",
+            api_key=llm_api_key,
+            base_url=base_url,
+        )
+        configure_embeddings(embed_config)
         
-        # RAG vector store for example retrieval
-        self._enable_rag = enable_rag
-        self._vector_store = None
-        if enable_rag:
-            from data_agent.rag import FAISSStore, EmbeddingConfig, configure_embeddings
+        self._vector_store = FAISSStore(persist_dir=rag_persist_dir)
+        
+        # Connect to appropriate mode
+        if self._use_agent_mode:
+            # Set RAG store for agent tools
+            set_rag_store(self._vector_store)
+        else:
+            # Connect vector store to the graph retrieval node
             from data_agent.graph.nodes import set_vector_store
-            # Configure embeddings - use embedding_model if specified, else default
-            embed_config = EmbeddingConfig(
-                provider="openai",
-                model=embedding_model or "text-embedding-3-small",
-                api_key=llm_api_key,
-                base_url=base_url,
-            )
-            configure_embeddings(embed_config)
-            self._vector_store = FAISSStore(persist_dir=rag_persist_dir)
-            # Connect vector store to the retrieval node
             set_vector_store(self._vector_store)
     
     def set_schema(self, schema: str) -> None:
@@ -312,6 +417,195 @@ class DataAgent:
         # Add user message to history
         conversation.add_message("user", question)
         
+        # Route to appropriate mode
+        if self._use_agent_mode and self._agent is not None:
+            return self._ask_agent_mode(question, conversation)
+        else:
+            return self._ask_graph_mode(question, conversation)
+    
+    def _ask_agent_mode(
+        self,
+        question: str,
+        conversation: "Conversation",
+    ) -> Dict[str, Any]:
+        """Handle ask using new Agent mode."""
+        # Build conversation history for agent
+        messages = []
+        for msg in conversation.messages[:-1]:  # Exclude current question
+            messages.append({
+                "role": msg.role,
+                "content": msg.content,
+            })
+        messages.append({"role": "user", "content": question})
+        
+        # Invoke agent
+        result = _run_async(self._agent.ainvoke({"messages": messages}))
+        
+        # Extract results from agent output
+        agent_messages = result.get("messages", [])
+        
+        # Find SQL and answer from agent's tool calls and responses
+        sql = None
+        sql_result = None
+        clarification_needed = False
+        clarification_question = None
+        
+        # 提取任务规划和执行过程
+        todo_list = []  # 任务规划列表
+        execution_steps = []  # 执行步骤记录
+        all_sqls = []  # 所有执行的 SQL 列表
+        pending_sql = None  # 待匹配的 SQL
+        
+        for msg in agent_messages:
+            # Check for tool calls
+            if hasattr(msg, "tool_calls"):
+                for tool_call in getattr(msg, "tool_calls", []):
+                    if isinstance(tool_call, dict):
+                        tool_name = tool_call.get("name", "")
+                        tool_args = tool_call.get("args", {})
+                        
+                        if tool_name == "execute_sql":
+                            sql = tool_args.get("sql")
+                            pending_sql = sql  # 保存 SQL 用于匹配结果
+                            all_sqls.append(sql)
+                        elif tool_name == "write_todos":
+                            # 提取任务规划
+                            todos = tool_args.get("todos", [])
+                            if todos:
+                                todo_list = todos
+                        elif tool_name == "ask_user_clarification":
+                            # 处理用户澄清请求
+                            clarification_needed = True
+                            clarification_question = tool_args.get("question")
+            
+            # Check for tool results
+            if hasattr(msg, "name"):
+                tool_name = msg.name
+                tool_content = msg.content
+                
+                # 核心工具名称映射（用于展示）
+                CORE_TOOLS = {
+                    "get_database_schema": "📋 获取 Schema",
+                    "search_examples": "🔍 检索样例",
+                    "validate_sql": "✓ 验证 SQL",
+                    "execute_sql": "▶ 生成 SQL",
+                }
+                
+                # 只记录核心工具的执行步骤（过滤 write_todos 等）
+                if tool_name in CORE_TOOLS:
+                    # 生成内容摘要
+                    summary = ""
+                    result_preview = None  # 用于前端展示的完整结果数据
+                    
+                    if tool_name == "get_database_schema":
+                        # 提取表名
+                        import re
+                        tables = re.findall(r'CREATE TABLE (\w+)', tool_content)
+                        summary = f"发现 {len(tables)} 张表: {', '.join(tables[:5])}" + ("..." if len(tables) > 5 else "")
+                    elif tool_name == "search_examples":
+                        if "error" in tool_content.lower():
+                            summary = "未找到相关样例"
+                        else:
+                            # 尝试计算样例数量
+                            try:
+                                import json
+                                examples = json.loads(tool_content) if isinstance(tool_content, str) else tool_content
+                                count = len(examples) if isinstance(examples, list) else 0
+                                summary = f"找到 {count} 个参考样例" if count > 0 else "检索完成"
+                            except:
+                                # Fallback: count SQL blocks in text
+                                count = tool_content.count("```sql")
+                                summary = f"找到 {count} 个参考样例" if count > 0 else "检索完成"
+                    elif tool_name == "validate_sql":
+                        if '"valid": true' in tool_content or '"valid":true' in tool_content:
+                            summary = "SQL 语法正确"
+                        else:
+                            summary = "SQL 语法有误"
+                    elif tool_name == "execute_sql":
+                        try:
+                            import json
+                            result_data = json.loads(tool_content) if isinstance(tool_content, str) else tool_content
+                            if result_data.get("success"):
+                                row_count = result_data.get("row_count", len(result_data.get("data", [])))
+                                summary = f"返回 {row_count} 行"
+                                result_preview = result_data  # 保存完整结果用于展示
+                            else:
+                                summary = f"失败: {result_data.get('error', '未知错误')[:30]}"
+                        except:
+                            summary = "执行完成"
+                    
+                    step_data = {
+                        "tool": CORE_TOOLS[tool_name],
+                        "tool_id": tool_name,
+                        "summary": summary,
+                        "result_data": result_preview, # 添加结果数据
+                        "status": "success" if "error" not in tool_content.lower() else "error",
+                    }
+                    # 为 execute_sql 添加 SQL 内容
+                    if tool_name == "execute_sql" and pending_sql:
+                        step_data["sql"] = pending_sql
+                        pending_sql = None  # 清除已使用的 SQL
+                    
+                    execution_steps.append(step_data)
+                
+                if tool_name == "execute_sql":
+                    try:
+                        import json
+                        sql_result = json.loads(tool_content) if isinstance(tool_content, str) else tool_content
+                    except:
+                        sql_result = {"data": tool_content}
+                elif tool_name == "ask_user_clarification":
+                    clarification_needed = True
+                    clarification_question = tool_content
+                elif tool_name == "write_todos":
+                    # 解析并更新 todo_list
+                    try:
+                        import json
+                        todo_data = json.loads(tool_content) if isinstance(tool_content, str) else tool_content
+                        if isinstance(todo_data, list):
+                            todo_list = todo_data
+                        elif isinstance(todo_data, dict) and "todos" in todo_data:
+                            todo_list = todo_data["todos"]
+                    except:
+                        pass
+        
+        # Get final answer
+        final_answer = agent_messages[-1].content if agent_messages else ""
+        if clarification_needed and clarification_question:
+            final_answer = clarification_question
+        
+        # Add assistant response to history
+        conversation.add_message(
+            "assistant", 
+            final_answer,
+            sql=sql,
+        )
+        
+        return {
+            "sql": sql,
+            "result": sql_result,
+            "answer": final_answer,
+            "is_valid": sql is not None,
+            "retry_count": 0,
+            "conversation_id": conversation.id,
+            "clarification_needed": clarification_needed,
+            "clarification_question": clarification_question,
+            # TodoList 任务规划信息
+            "todo_list": todo_list,
+            "execution_steps": execution_steps,
+            # No decomposition in agent mode (replaced by todo_list)
+            "question_analysis": None,
+            "sub_questions": None,
+            "sub_results": None,
+            "similar_examples": None,
+        }
+    
+    def _ask_graph_mode(
+        self,
+        question: str,
+        conversation: "Conversation",
+    ) -> Dict[str, Any]:
+        """Handle ask using legacy Graph mode."""
         # Build context from conversation history
         conversation_context = ""
         if len(conversation.messages) > 1:
@@ -350,6 +644,7 @@ class DataAgent:
             "question_analysis": final_state.get("question_analysis"),
             "sub_questions": final_state.get("sub_questions"),
             "sub_results": final_state.get("sub_results"),
+            "similar_examples": final_state.get("retrieved_examples"),
         }
     
     async def ask_async(

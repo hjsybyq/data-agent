@@ -1,15 +1,15 @@
 """
 Pytest Configuration and Fixtures
 
-Common fixtures for testing Vanna LangGraph components.
+Common fixtures for testing Data Agent components.
 """
 
 import pytest
 from typing import Dict, Any
 
-from vanna_langgraph.graph.state import VannaState, create_initial_state
-from vanna_langgraph.tools.sql_execution_tool import enable_mock_mode
-from vanna_langgraph.tools.schema_tool import set_database_schema
+from data_agent.graph.state import AgentState, create_initial_state
+from data_agent.tools.sql_execution_tool import enable_mock_mode
+from data_agent.tools.schema_tool import set_database_schema
 
 
 # Sample test schema
@@ -68,7 +68,7 @@ def sample_question() -> str:
 
 
 @pytest.fixture
-def initial_state(sample_question: str, test_schema: str) -> VannaState:
+def initial_state(sample_question: str, test_schema: str) -> AgentState:
     """Create an initial state for testing."""
     return create_initial_state(
         user_question=sample_question,

@@ -2,7 +2,7 @@
 
 A LangGraph-based Text-to-SQL system with Web UI. This project provides a graph-driven approach to natural language SQL generation with explicit state management, retry loops, and LangChain integration.
 
-[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/hjsybyq/data-agent)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/hjsybyq/data-agent)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-green.svg)](https://github.com/langchain-ai/langgraph)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -10,6 +10,8 @@ A LangGraph-based Text-to-SQL system with Web UI. This project provides a graph-
 ## Features
 
 - 🌐 **Web UI** - Interactive chat interface with FastAPI + Alpine.js
+- 🤖 **Agent Mode** - Autonomous multi-step reasoning and planning
+- 🙋 **Human-in-the-Loop** - Smart clarification questions when query is ambiguous
 - 🔄 **Graph-Driven Architecture** - Explicit flow control with LangGraph StateGraph
 - 🛠️ **Self-Correcting SQL** - Automatic retry loops for SQL validation and execution errors
 - 🔌 **Provider Agnostic** - Support for OpenAI, Anthropic, and Google LLMs
@@ -105,10 +107,11 @@ python run_web.py
 Open http://localhost:8000 in your browser.
 
 **Features:**
-- 💬 Chat-style interface for natural language queries
+- 💬 Chat-style interface with Agent reasoning steps
+- 📋 Transparent execution plan and intermediate data results
+- 🙋 Smart clarification mechanism for ambiguous queries
 - 📝 SQL syntax highlighting and copy button
 - 📊 Automatic data visualization with ECharts
-- 🔀 Question decomposition display for complex queries
 - 📚 Training data management
 
 ## Usage

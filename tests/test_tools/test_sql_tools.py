@@ -5,9 +5,9 @@ Tests for LangChain tool implementations.
 """
 
 import pytest
-from vanna_langgraph.tools.schema_tool import get_database_schema, set_database_schema
-from vanna_langgraph.tools.sql_execution_tool import execute_sql, enable_mock_mode
-from vanna_langgraph.tools.validation_tool import validate_sql
+from data_agent.tools.schema_tool import get_database_schema, set_database_schema
+from data_agent.tools.sql_execution_tool import execute_sql, enable_mock_mode
+from data_agent.tools.validation_tool import validate_sql
 
 
 class TestSchemaTool:

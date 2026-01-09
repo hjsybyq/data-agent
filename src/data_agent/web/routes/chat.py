@@ -36,6 +36,9 @@ class AskResponse(BaseModel):
     conversation_id: str
     question_analysis: Optional[dict] = None
     sub_questions: Optional[list] = None
+    # Agent mode: TodoList task planning
+    todo_list: Optional[list] = None
+    execution_steps: Optional[list] = None
 
 
 class SchemaRequest(BaseModel):
@@ -52,6 +55,7 @@ def get_agent() -> DataAgent:
             base_url="https://api.siliconflow.cn/v1",
             llm_model="Qwen/Qwen3-30B-A3B-Instruct-2507",
             llm_api_key="",  # Will be set via environment or config
+            use_agent_mode=True,  # 启用新的 Agent 模式
         )
         if _schema:
             _agent.set_schema(_schema)
@@ -64,6 +68,7 @@ def configure_agent(
     llm_model: Optional[str] = None,
     llm_api_key: Optional[str] = None,
     database_connection = None,
+    use_agent_mode: bool = True,  # 默认启用 Agent 模式
 ):
     """Configure the global agent instance."""
     global _agent
@@ -73,6 +78,7 @@ def configure_agent(
         llm_model=llm_model,
         llm_api_key=llm_api_key,
         database_connection=database_connection,
+        use_agent_mode=use_agent_mode,
     )
     if _schema:
         _agent.set_schema(_schema)
@@ -101,6 +107,8 @@ async def ask_question(request: AskRequest):
             conversation_id=result.get("conversation_id", ""),
             question_analysis=result.get("question_analysis"),
             sub_questions=result.get("sub_questions"),
+            todo_list=result.get("todo_list"),
+            execution_steps=result.get("execution_steps"),
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -142,7 +150,17 @@ async def ask_stream(
                 yield f"data: {json.dumps({'type': 'sql', 'data': result['sql']})}\n\n"
                 await asyncio.sleep(0.1)
             
-            # Send sub-questions if any
+            # Send todo_list event (Agent mode task planning)
+            if result.get("todo_list"):
+                yield f"data: {json.dumps({'type': 'todo_list', 'data': result['todo_list']})}\n\n"
+                await asyncio.sleep(0.1)
+            
+            # Send execution_steps event
+            if result.get("execution_steps"):
+                yield f"data: {json.dumps({'type': 'execution_steps', 'data': result['execution_steps']})}\n\n"
+                await asyncio.sleep(0.1)
+            
+            # Send sub-questions if any (Graph mode)
             if result.get("sub_questions"):
                 yield f"data: {json.dumps({'type': 'sub_questions', 'data': result['sub_questions']})}\n\n"
                 await asyncio.sleep(0.1)
