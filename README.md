@@ -121,23 +121,23 @@ Open http://localhost:8000 in your browser.
 ```python
 from data_agent import DataAgent
 
-vn = DataAgent()
-vn.set_schema("CREATE TABLE users (id INT, name TEXT);")
+dataagent = DataAgent()
+dataagent.set_schema("CREATE TABLE users (id INT, name TEXT);")
 
 # Generate SQL only
-sql = vn.generate_sql("Count all users")
+sql = dataagent.generate_sql("Count all users")
 
 # Execute SQL
-result = vn.run_sql("SELECT COUNT(*) FROM users")
+result = dataagent.run_sql("SELECT COUNT(*) FROM users")
 
 # Full pipeline
-response = vn.ask("How many users?")
+response = dataagent.ask("How many users?")
 ```
 
 ### OpenAI Compatible API
 
 ```python
-vn = DataAgent(
+dataagent = DataAgent(
     llm_provider="openai_compatible",
     base_url="https://api.siliconflow.cn/v1",
     llm_model="Qwen/Qwen3-30B-A3B-Instruct-2507",
@@ -150,14 +150,14 @@ vn = DataAgent(
 
 ```python
 # Train with examples
-vn.train(question="How many customers?", sql="SELECT COUNT(*) FROM Customer")
-vn.train(question="Top selling products", sql="SELECT * FROM Product ORDER BY Sales DESC LIMIT 10")
+dataagent.train(question="How many customers?", sql="SELECT COUNT(*) FROM Customer")
+dataagent.train(question="Top selling products", sql="SELECT * FROM Product ORDER BY Sales DESC LIMIT 10")
 
 # View training data
-examples = vn.get_training_data()
+examples = dataagent.get_training_data()
 
 # Search similar examples
-similar = vn.search_similar_examples("customer count", k=3)
+similar = dataagent.search_similar_examples("customer count", k=3)
 ```
 
 ### Connect to Real Database
@@ -166,7 +166,7 @@ similar = vn.search_similar_examples("customer count", k=3)
 from sqlalchemy import create_engine
 
 engine = create_engine("postgresql://user:pass@localhost/db")
-vn = DataAgent(database_connection=engine.connect())
+dataagent = DataAgent(database_connection=engine.connect())
 ```
 
 ## Testing

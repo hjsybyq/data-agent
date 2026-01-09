@@ -69,7 +69,7 @@ def create_text2sql_agent(
     if base_url:
         llm_kwargs["base_url"] = base_url
         
-    llm = ChatOpenAI(**llm_kwargs)
+    llm = ChatOpenAI(streaming=True, **llm_kwargs)
     
     # Configure tools - use defaults if not provided
     if tools is None:
